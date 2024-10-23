@@ -14,9 +14,10 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::timer::{get_time, get_time_ms};
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -43,8 +44,16 @@ pub struct TaskManager {
 pub struct TaskManagerInner {
     /// task list
     tasks: [TaskControlBlock; MAX_APP_NUM],
+    ///task first running times
+    tasks_first: [usize; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    ///warded syscall times for each syscall
+    syscall_times: [[u32; MAX_SYSCALL_NUM]; MAX_APP_NUM],
+
+    first_time: usize,
+
+    tasks_use_time: [usize; MAX_APP_NUM],
 }
 
 lazy_static! {
@@ -65,6 +74,10 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_times: [[0; MAX_SYSCALL_NUM];MAX_APP_NUM],
+                    first_time:0,
+                    tasks_first: [0; MAX_APP_NUM],
+                    tasks_use_time: [0; MAX_APP_NUM],
                 })
             },
         }
@@ -79,6 +92,9 @@ impl TaskManager {
     fn run_first_task(&self) -> ! {
         let mut inner = self.inner.exclusive_access();
         let task0 = &mut inner.tasks[0];
+
+ 
+
         task0.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
         drop(inner);
@@ -115,12 +131,48 @@ impl TaskManager {
             .find(|id| inner.tasks[*id].task_status == TaskStatus::Ready)
     }
 
+    /**
+     * 记录系统第一次调用时间
+     */
+    pub fn update_syscall_times(&self, call_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+
+        let idx = inner.current_task;
+
+        inner.syscall_times[idx][call_id] = inner.syscall_times[idx][call_id] + 1;
+
+        if inner.first_time == 0 {
+            inner.first_time = get_time();
+        }
+    }
+
+    /**
+     *  Get the current task id, context, and status.
+     */
+    pub fn current_task(&self) -> ([u32; MAX_SYSCALL_NUM], usize, TaskStatus) {
+        let inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        (
+            inner.syscall_times[current_task].clone(),
+            get_time_ms() - inner.tasks_first[current_task],
+            TaskStatus::Running,
+        )
+    }
+
     /// Switch current `Running` task to the task we have found,
     /// or there is no `Ready` task and we can exit with all applications completed
     fn run_next_task(&self) {
         if let Some(next) = self.find_next_task() {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
+
+            if inner.tasks_first[current] == 0 {
+                inner.tasks_first[current] = get_time_ms();
+            } else {
+                inner.tasks_use_time[current] =
+                    inner.tasks_use_time[current] + (get_time_ms() - inner.tasks_first[current]);
+            }
+
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
