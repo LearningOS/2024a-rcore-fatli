@@ -1,7 +1,7 @@
 //! Process management syscalls
 use crate::{
     config::MAX_SYSCALL_NUM, mm::translated_byte_buffer, task::{
-        change_program_brk, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus
+        change_program_brk, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus, TASK_MANAGER
     }, timer::get_time_us
 };
 
@@ -74,9 +74,18 @@ fn copy_to_virt<T>(src: &T, dst: *mut T) {
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!("kernel: sys_task_info NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
+    trace!("kernel: sys_task_info");
+    let (syscall_times, time, task_status) = TASK_MANAGER.current_task();
+
+    let task_info = TaskInfo {
+        status: task_status,
+        syscall_times: syscall_times,
+        time: time,
+    };
+    copy_to_virt(&task_info, ti);
+
+    0
 }
 
 // YOUR JOB: Implement mmap.

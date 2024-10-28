@@ -14,8 +14,10 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
+use crate::timer::{get_time, get_time_ms};
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -46,7 +48,24 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    tasks_first: Vec<usize>,
+    syscall_times: Vec<[u32; MAX_SYSCALL_NUM]>,
+    first_time: usize,
+    tasks_use_time: Vec<usize>,
 }
+
+// /// task list
+// tasks: [TaskControlBlock; MAX_APP_NUM],
+// ///task first running times
+// tasks_first: [usize; MAX_APP_NUM],
+// /// id of current `Running` task
+// current_task: usize,
+// ///warded syscall times for each syscall
+// syscall_times: [[u32; MAX_SYSCALL_NUM]; MAX_APP_NUM],
+
+// first_time: usize,
+
+// tasks_use_time: [usize; MAX_APP_NUM],
 
 lazy_static! {
     /// a `TaskManager` global instance through lazy_static!
@@ -55,8 +74,15 @@ lazy_static! {
         let num_app = get_num_app();
         println!("num_app = {}", num_app);
         let mut tasks: Vec<TaskControlBlock> = Vec::new();
+        let mut tasks_first: Vec<usize> = Vec::new();
+        let mut tasks_use_time: Vec<usize> = Vec::new();
+        let mut syscall_times: Vec<[u32; MAX_SYSCALL_NUM]> = Vec::new();
+  
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
+            tasks_first.push(0);
+            tasks_use_time.push(0);
+            syscall_times.push([0; MAX_SYSCALL_NUM]);
         }
         TaskManager {
             num_app,
@@ -64,6 +90,10 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    tasks_first,
+                    syscall_times,
+                    first_time: 0,
+                    tasks_use_time,
                 })
             },
         }
@@ -95,6 +125,35 @@ impl TaskManager {
         let cur = inner.current_task;
         inner.tasks[cur].task_status = TaskStatus::Ready;
     }
+
+        /**
+     * 记录系统第一次调用时间
+     */
+    pub fn update_syscall_times(&self, call_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+
+        let idx = inner.current_task;
+
+        inner.syscall_times[idx][call_id] = inner.syscall_times[idx][call_id] + 1;
+
+        if inner.first_time == 0 {
+            inner.first_time = get_time();
+        }
+    }
+
+    /**
+     *  Get the current task id, context, and status.
+     */
+    pub fn current_task(&self) -> ([u32; MAX_SYSCALL_NUM], usize, TaskStatus) {
+        let inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        (
+            inner.syscall_times[current_task].clone(),
+            get_time_ms() - inner.tasks_first[current_task],
+            TaskStatus::Running,
+        )
+    }
+
 
     /// Change the status of current `Running` task into `Exited`.
     fn mark_current_exited(&self) {
@@ -141,6 +200,14 @@ impl TaskManager {
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
+
+            if inner.tasks_first[current] == 0 {
+                inner.tasks_first[current] = get_time_ms();
+            } else {
+                inner.tasks_use_time[current] =
+                    inner.tasks_use_time[current] + (get_time_ms() - inner.tasks_first[current]);
+            }
+
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
             drop(inner);
