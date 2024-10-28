@@ -2,13 +2,15 @@
 use alloc::sync::Arc;
 
 use crate::{
+ 
     config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str,translated_byte_buffer},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
+        change_program_brk,add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TaskStatus,
-    },
+    },timer::get_time_us
+ 
 };
 
 #[repr(C)]
@@ -117,13 +119,45 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
+<<<<<<< HEAD
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
     -1
+=======
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    trace!("kernel: sys_get_time");
+    let us = get_time_us();
+
+    let ts1 = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+
+    copy_to_virt(&ts1, ts);
+
+    0
+>>>>>>> 909f6e1 (feat get_sys_time)
 }
+
+fn copy_to_virt<T>(src: &T, dst: *mut T) {
+    let src_buf_ptr: *const u8 = unsafe { core::mem::transmute(src) };
+    let dst_buf_ptr: *const u8 = unsafe { core::mem::transmute(dst) };
+    let len = core::mem::size_of::<T>();
+    let dst_frames = translated_byte_buffer(current_user_token(), dst_buf_ptr, len);
+
+    let mut offset = 0;
+    for dst_frame in dst_frames {
+        dst_frame.copy_from_slice(unsafe {
+            core::slice::from_raw_parts(src_buf_ptr.add(offset), dst_frame.len())
+        });
+
+        offset += dst_frame.len();
+    }
+}
+
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
