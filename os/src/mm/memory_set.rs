@@ -35,8 +35,8 @@ lazy_static! {
 }
 /// address space
 pub struct MemorySet {
-    page_table: PageTable,
-    areas: Vec<MapArea>,
+    pub page_table: PageTable,
+    pub areas: Vec<MapArea>,
 }
 
 impl MemorySet {

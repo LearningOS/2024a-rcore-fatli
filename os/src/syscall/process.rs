@@ -1,8 +1,15 @@
 //! Process management syscalls
+
+use crate::mm::{frame_alloc, MapArea, MapType, PTEFlags, VirtPageNum};
+#[allow(unused_imports)]
 use crate::{
-    config::MAX_SYSCALL_NUM, mm::translated_byte_buffer, task::{
-        change_program_brk, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus, TASK_MANAGER
-    }, timer::get_time_us
+    config::{MAX_SYSCALL_NUM, PAGE_SIZE},
+    mm::{translated_byte_buffer, MapPermission, VirtAddr},
+    task::{
+        change_program_brk, current_user_token, exit_current_and_run_next,
+        suspend_current_and_run_next, TaskStatus, TASK_MANAGER,
+    },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -70,7 +77,6 @@ fn copy_to_virt<T>(src: &T, dst: *mut T) {
     }
 }
 
-
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
@@ -89,15 +95,179 @@ pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
 }
 
 // YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+#[allow(unused_variables)]
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
     trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+
+    // if start % PAGE_SIZE != 0 {
+    //     return -1;
+    // }
+
+    // if port & !0x7 != 0 {
+    //     return -1;
+    // }
+
+    // if port & 0x7 == 0 {
+    //     return -1;
+    // }
+
+    // let map_perm = MapPermission::from_bits_truncate((port as u8) << 1);
+
+    // let page_count = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    // let block = TASK_MANAGER.get_current_task_control_block();
+
+    // let inner = TASK_MANAGER.inner.exclusive_access();
+
+    // let mem_set = &mut block.memory_set;
+
+    // for i in 0..page_count {
+    //     let start_va = VirtAddr::from(start + i * PAGE_SIZE);
+    //     let end_va = VirtAddr::from(start + (i + 1) * PAGE_SIZE);
+
+    //     info!(
+    //         "Mapping page: start_va = {:#x},end_va = {:#x}",
+    //         start_va.0, end_va.0
+    //     );
+    //     mem_set.insert_framed_area(start_va, end_va, map_perm);
+    // }
+
+    // drop(inner);
+    // 0
+
+    let va_start: VirtAddr = start.into();
+    if !va_start.aligned() {
+        debug!("unmap fail don't aligned");
+        return -1;
+    }
+
+    if port == 0 || port & 0b0000_1000 != 0 {
+        return -1;
+    }
+
+
+    let mut va_start: VirtPageNum = va_start.into();
+
+    let mut map_perm: MapPermission = MapPermission::U;
+
+    let mut flags = PTEFlags::from_bits(port as u8).unwrap();
+
+    if port & 0b0000_0001 != 0 {
+        flags |= PTEFlags::R;
+        map_perm |= MapPermission::R;
+    }
+
+    if port & 0b0000_0010 != 0 {
+        flags |= PTEFlags::W;
+        map_perm |= MapPermission::W;
+    }
+
+    if port & 0b0000_0100 != 0 {
+        flags |= PTEFlags::X;
+        map_perm |= MapPermission::X;
+    }
+
+
+    flags |= PTEFlags::U;
+    flags |= PTEFlags::V;
+
+    let va_end: VirtAddr = (start + len).into();
+    let va_end: VirtPageNum = va_end.ceil();
+
+    let block = TASK_MANAGER.get_current_task_control_block();
+    let mem_set = &mut block.memory_set;
+
+    println!(
+        "start = {:x} && va_star = {} && va_end = {}",
+        start, va_start.0, va_end.0
+    );
+
+    let mut map: Option<MapArea> = None;
+    while va_start != va_end {
+        println!("map va_start = {}", va_start.0);
+        if let Some(pte) = mem_set.translate(va_start) {
+            if pte.is_valid() {
+                // println!("mmap found exit va_start {}", va_start.0);
+                return -1;
+            }
+        }
+
+        let map_type = MapType::Framed;
+        if map.is_none() {
+            map = Some(MapArea::new(
+                va_start.into(),
+                va_end.into(),
+                map_type,
+                map_perm,
+            ));
+            map.as_mut()
+                .unwrap()
+                .map_one(&mut mem_set.page_table, va_start);
+
+        // if let Some(ppn) = frame_alloc() {
+        //      mem_set.page_table.map(va_start, ppn.ppn, flags);
+
+        //     // let map_type = MapType::Framed;
+
+        //     // let va_next =  VirtPageNum(va_start.0 + 1);
+        //     // //va_start, ppn
+        //     // let map = MapArea::new(va_start.into(), va_end.into(), map_type, map_perm);
+
+        //     // mem_set.areas.push(map);
+        //     let map_type = MapType::Framed;
+        //     if map.is_none() {
+        //         map = Some(MapArea::new(
+        //             va_start.into(),
+        //             va_end.into(),
+        //             map_type,
+        //             map_perm,
+        //         ));
+        //         map.as_mut()
+        //             .unwrap()
+        //             .map_one(&mut mem_set.page_table, va_start);
+        //     }
+        } else {
+            return -1;
+        }
+
+        va_start = VirtPageNum(va_start.0 + 1);
+    }
+    mem_set.areas.push(map.unwrap());
+    0
 }
 
 // YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    // trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
+
+    // let va_start: VirtAddr = start.into();
+    // if !va_start.aligned() {
+    //     debug!("unmap fail don't aligned");
+    //     return -1;
+    // }
+    // let mut va_start: VirtPageNum = va_start.into();
+
+    // let va_end: VirtAddr = (start + len).into();
+    // let va_end: VirtPageNum = va_end.ceil();
+
+    // let block = TASK_MANAGER.get_current_task_control_block();
+    // let mem_set = &mut block.memory_set;
+
+    // while va_start != va_end {
+    //     // println!("unmap va_start = {}", va_start.0);
+    //     if let Some(item) = mem_set.page_table.translate(va_start) {
+    //         if !item.is_valid() {
+    //             debug!("unmap on no map vpn");
+    //             return -1;
+    //         }
+    //     } else {
+    //         return -1;
+    //     }
+    //     mem_set.page_table.unmap(va_start);
+    //     mem_set.map_tree.remove(&va_start);
+    //     va_start = VirtPageNum(va_start.0 + 1);
+    // }
+    0
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {

@@ -39,11 +39,11 @@ pub struct TaskManager {
     /// total number of tasks
     num_app: usize,
     /// use inner value to get mutable access
-    inner: UPSafeCell<TaskManagerInner>,
+   pub  inner: UPSafeCell<TaskManagerInner>,
 }
 
 /// The task manager inner in 'UPSafeCell'
-struct TaskManagerInner {
+pub struct TaskManagerInner {
     /// task list
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
@@ -77,7 +77,7 @@ lazy_static! {
         let mut tasks_first: Vec<usize> = Vec::new();
         let mut tasks_use_time: Vec<usize> = Vec::new();
         let mut syscall_times: Vec<[u32; MAX_SYSCALL_NUM]> = Vec::new();
-  
+
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
             tasks_first.push(0);
@@ -126,7 +126,21 @@ impl TaskManager {
         inner.tasks[cur].task_status = TaskStatus::Ready;
     }
 
-        /**
+    #[allow(unused_unsafe, unused_mut,missing_docs)]
+    pub fn get_current_task_control_block(&self) -> &'static mut TaskControlBlock {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+
+        let task_control = &inner.tasks[cur];
+
+        unsafe {
+            (task_control as *const TaskControlBlock as *mut TaskControlBlock)
+                .as_mut()
+                .unwrap()
+        }
+    }
+
+    /**
      * 记录系统第一次调用时间
      */
     pub fn update_syscall_times(&self, call_id: usize) {
@@ -153,7 +167,6 @@ impl TaskManager {
             TaskStatus::Running,
         )
     }
-
 
     /// Change the status of current `Running` task into `Exited`.
     fn mark_current_exited(&self) {
