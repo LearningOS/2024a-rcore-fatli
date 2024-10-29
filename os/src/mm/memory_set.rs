@@ -47,6 +47,20 @@ impl MemorySet {
             areas: Vec::new(),
         }
     }
+    pub fn remove_area(&mut self, start: VirtAddr, end: VirtAddr,) {
+        let start_vpn: VirtPageNum = start.floor();
+        let end_vpn: VirtPageNum = end.ceil();
+ 
+        for ele in &mut self.areas {
+            if ele.vpn_range.get_start().eq(&start_vpn) && ele.vpn_range.get_end().eq(&end_vpn) {
+                ele.unmap_one(&mut self.page_table, start_vpn);
+                break;
+            }
+          
+        }
+      
+    }
+
     /// Get the page table token
     pub fn token(&self) -> usize {
         self.page_table.token()
@@ -287,6 +301,7 @@ impl MapArea {
             map_perm,
         }
     }
+
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;
         match self.map_type {

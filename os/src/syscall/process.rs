@@ -145,7 +145,6 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
         return -1;
     }
 
-
     let mut va_start: VirtPageNum = va_start.into();
 
     let mut map_perm: MapPermission = MapPermission::U;
@@ -167,7 +166,6 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
         map_perm |= MapPermission::X;
     }
 
-
     flags |= PTEFlags::U;
     flags |= PTEFlags::V;
 
@@ -182,7 +180,6 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
         start, va_start.0, va_end.0
     );
 
-    let mut map: Option<MapArea> = None;
     while va_start != va_end {
         println!("map va_start = {}", va_start.0);
         if let Some(pte) = mem_set.translate(va_start) {
@@ -193,80 +190,56 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
         }
 
         let map_type = MapType::Framed;
-        if map.is_none() {
-            map = Some(MapArea::new(
-                va_start.into(),
-                va_end.into(),
-                map_type,
-                map_perm,
-            ));
-            map.as_mut()
-                .unwrap()
-                .map_one(&mut mem_set.page_table, va_start);
+        let next =  VirtPageNum(va_start.0 + 1);
 
-        // if let Some(ppn) = frame_alloc() {
-        //      mem_set.page_table.map(va_start, ppn.ppn, flags);
-
-        //     // let map_type = MapType::Framed;
-
-        //     // let va_next =  VirtPageNum(va_start.0 + 1);
-        //     // //va_start, ppn
-        //     // let map = MapArea::new(va_start.into(), va_end.into(), map_type, map_perm);
-
-        //     // mem_set.areas.push(map);
-        //     let map_type = MapType::Framed;
-        //     if map.is_none() {
-        //         map = Some(MapArea::new(
-        //             va_start.into(),
-        //             va_end.into(),
-        //             map_type,
-        //             map_perm,
-        //         ));
-        //         map.as_mut()
-        //             .unwrap()
-        //             .map_one(&mut mem_set.page_table, va_start);
-        //     }
-        } else {
-            return -1;
-        }
+        let mut map = Some(MapArea::new(
+            va_start.into(),
+            next.into(),
+            map_type,
+            map_perm,
+        ));
+        map.as_mut()
+            .unwrap()
+            .map_one(&mut mem_set.page_table, va_start);
+        mem_set.areas.push(map.unwrap());
 
         va_start = VirtPageNum(va_start.0 + 1);
     }
-    mem_set.areas.push(map.unwrap());
+
     0
 }
 
 // YOUR JOB: Implement munmap.
 pub fn sys_munmap(start: usize, len: usize) -> isize {
-    // trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
+    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
 
-    // let va_start: VirtAddr = start.into();
-    // if !va_start.aligned() {
-    //     debug!("unmap fail don't aligned");
-    //     return -1;
-    // }
-    // let mut va_start: VirtPageNum = va_start.into();
+    let va_start: VirtAddr = start.into();
+    if !va_start.aligned() {
+        debug!("unmap fail don't aligned");
+        return -1;
+    }
+    let mut start_page_num: VirtPageNum = va_start.into();
 
-    // let va_end: VirtAddr = (start + len).into();
-    // let va_end: VirtPageNum = va_end.ceil();
+    let va_end: VirtAddr = (start + len).into();
+    let end_page_num: VirtPageNum = va_end.ceil();
 
-    // let block = TASK_MANAGER.get_current_task_control_block();
-    // let mem_set = &mut block.memory_set;
+    let block = TASK_MANAGER.get_current_task_control_block();
+    let mem_set = &mut block.memory_set;
 
-    // while va_start != va_end {
-    //     // println!("unmap va_start = {}", va_start.0);
-    //     if let Some(item) = mem_set.page_table.translate(va_start) {
-    //         if !item.is_valid() {
-    //             debug!("unmap on no map vpn");
-    //             return -1;
-    //         }
-    //     } else {
-    //         return -1;
-    //     }
-    //     mem_set.page_table.unmap(va_start);
-    //     mem_set.map_tree.remove(&va_start);
-    //     va_start = VirtPageNum(va_start.0 + 1);
-    // }
+    while start_page_num != end_page_num {
+        // println!("unmap va_start = {}", va_start.0);
+        if let Some(item) = mem_set.page_table.translate(start_page_num) {
+            if !item.is_valid() {
+                debug!("unmap on no map vpn");
+                return -1;
+            }
+        } else {
+            return -1;
+        }
+        //mem_set.page_table.unmap(start_page_num);
+        mem_set.remove_area(start_page_num.into(), VirtPageNum(start_page_num.0 + 1).into());
+        start_page_num = VirtPageNum(start_page_num.0 + 1);
+    }
     0
 }
 /// change data segment size
