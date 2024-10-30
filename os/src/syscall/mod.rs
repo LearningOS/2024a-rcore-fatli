@@ -12,7 +12,7 @@
 /// read syscall
 const SYSCALL_READ: usize = 63;
 /// write syscall
-const SYSCALL_WRITE: usize = 64;
+pub const SYSCALL_WRITE: usize = 64;
 /// exit syscall
 const SYSCALL_EXIT: usize = 93;
 /// yield syscall

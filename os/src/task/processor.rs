@@ -4,12 +4,19 @@
 //! the current running state of CPU is recorded,
 //! and the replacement and transfer of control flow of different applications are executed.
 
+use core::borrow::BorrowMut;
+
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::MAX_SYSCALL_NUM;
 use crate::sync::UPSafeCell;
+use crate::syscall::SYSCALL_WRITE;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
+use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use lazy_static::*;
 
 /// Processor management structure
@@ -24,9 +31,11 @@ pub struct Processor {
 impl Processor {
     ///Create an empty Processor
     pub fn new() -> Self {
-        Self {
-            current: None,
-            idle_task_cx: TaskContext::zero_init(),
+        unsafe {
+            Self {
+                current: None,
+                idle_task_cx: TaskContext::zero_init(),
+            }
         }
     }
 
@@ -44,6 +53,59 @@ impl Processor {
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
     }
+
+    pub fn current_process(&self) -> Option<Arc<TaskControlBlock>> {
+        self.current.as_ref().map(Arc::clone)
+    }
+
+    /**
+     * 记录系统第一次调用时间
+     */
+    pub fn update_syscall_times(&mut self, call_id: usize) {
+
+        // assert!(3 <= info.syscall_times[SYSCALL_GETTIMEOFDAY]);
+        // assert_eq!(1, info.syscall_times[SYSCALL_TASK_INFO]);
+        // assert_eq!(0, info.syscall_times[SYSCALL_WRITE]);
+        // assert!(0 < info.syscall_times[SYSCALL_YIELD]);
+        // assert_eq!(0, info.syscall_times[SYSCALL_EXIT]);
+
+
+
+        let current_block = self.current().unwrap();
+        let mut current = current_block.inner_exclusive_access();
+        let syscall_times = current.get_syscall_times();
+        syscall_times[call_id] = syscall_times[call_id] + 1;
+
+        let mut cmd;
+        match call_id {
+           // SYSCALL_GETTIMEOFDAY=>cmd="SYSCALL_GETTIMEOFDAY",
+          //  SYSCALL_TASK_INFO=>cmd="SYSCALL_TASK_INFO",
+            SYSCALL_WRITE=>cmd="SYSCALL_WRITE",
+           // SYSCALL_YIELD=>cmd="SYSCALL_YIELD",
+           // SYSCALL_EXIT=>cmd="SYSCALL_EXIT",
+            _=>cmd="unknown",
+        }
+
+        if cmd!="unknown" {
+           // println!("------update_syscall_times cmd:{} pid: {}, call_id: {} ,times: {}---------",cmd, current_block.pid.0, call_id, syscall_times[call_id])
+        }
+       
+ 
+    }
+
+    /**
+     *  Get the current task id, context, and status.
+     */
+    pub fn current_task(&self) -> ([u32; MAX_SYSCALL_NUM], usize, TaskStatus) {
+        let current = self.current().unwrap();
+        let mut current = current.inner_exclusive_access();
+
+        (
+            current.syscall_times.clone(),
+            get_time_ms() - *current.get_tasks_first(),
+            TaskStatus::Running,
+        )
+    }
 }
 
 lazy_static! {
@@ -55,16 +117,36 @@ lazy_static! {
 pub fn run_tasks() {
     loop {
         let mut processor = PROCESSOR.exclusive_access();
+
         if let Some(task) = fetch_task() {
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+
+     
+
+
+            // else {
+
+            //     let first = processor.tasks_first.get(&pid).unwrap().clone();
+            //     let used = processor.tasks_use_time.get_mut(&pid).unwrap();
+
+            //     *used = *used + (get_time_ms() - first) as usize;
+            // }
+
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
             processor.current = Some(task);
+            if let Some (current) = processor.current() {
+                let mut current = current.inner_exclusive_access();
+
+                if *current.get_tasks_first() == 0 {
+                    *current.get_tasks_first() = get_time_ms();
+                }
+            }
             // release processor manually
             drop(processor);
             unsafe {

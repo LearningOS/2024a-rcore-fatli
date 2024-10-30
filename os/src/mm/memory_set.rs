@@ -32,8 +32,8 @@ lazy_static! {
 }
 /// address space
 pub struct MemorySet {
-    page_table: PageTable,
-    areas: Vec<MapArea>,
+    pub page_table: PageTable,
+    pub areas: Vec<MapArea>,
 }
 
 impl MemorySet {
@@ -48,6 +48,22 @@ impl MemorySet {
     pub fn token(&self) -> usize {
         self.page_table.token()
     }
+
+    pub fn remove_area(&mut self, start: VirtAddr, end: VirtAddr,) {
+        let start_vpn: VirtPageNum = start.floor();
+        let end_vpn: VirtPageNum = end.ceil();
+ 
+        for ele in &mut self.areas {
+            if ele.vpn_range.get_start().eq(&start_vpn) && ele.vpn_range.get_end().eq(&end_vpn) {
+                ele.unmap_one(&mut self.page_table, start_vpn);
+                break;
+            }
+          
+        }
+      
+    }
+
+
     /// Assume that no conflicts.
     pub fn insert_framed_area(
         &mut self,

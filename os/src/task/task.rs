@@ -1,12 +1,13 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
+use core::borrow::BorrowMut;
 use core::cell::RefMut;
 
 /// Task control block structure
@@ -22,6 +23,8 @@ pub struct TaskControlBlock {
 
     /// Mutable
     inner: UPSafeCell<TaskControlBlockInner>,
+
+
 }
 
 impl TaskControlBlock {
@@ -34,6 +37,7 @@ impl TaskControlBlock {
         let inner = self.inner_exclusive_access();
         inner.memory_set.token()
     }
+ 
 }
 
 pub struct TaskControlBlockInner {
@@ -68,6 +72,10 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    pub tasks_first: usize,
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
 }
 
 impl TaskControlBlockInner {
@@ -85,6 +93,16 @@ impl TaskControlBlockInner {
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
     }
+
+    pub fn  get_tasks_first(&mut self)->&mut usize{
+        &mut self.tasks_first
+    }
+
+    pub fn  get_syscall_times(&mut self)->&mut [u32; MAX_SYSCALL_NUM]{
+        &mut self.syscall_times
+    }
+ 
+
 }
 
 impl TaskControlBlock {
@@ -118,8 +136,12 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    tasks_first: 0,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
                 })
             },
+
+            
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
@@ -191,8 +213,11 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    tasks_first:0,
+                    syscall_times: [0; MAX_SYSCALL_NUM],   
                 })
             },
+ 
         });
         // add child
         parent_inner.children.push(task_control_block.clone());

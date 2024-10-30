@@ -17,7 +17,7 @@ mod context;
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT_BASE};
 use crate::syscall::syscall;
 use crate::task::{
-    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, PROCESSOR,
 };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
@@ -60,12 +60,15 @@ pub fn trap_handler() -> ! {
     let scause = scause::read();
     let stval = stval::read();
     // trace!("into {:?}", scause.cause());
+ 
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             // jump to next instruction anyway
             let mut cx = current_trap_cx();
             cx.sepc += 4;
             // get system call return value
+       
+            PROCESSOR.exclusive_access().update_syscall_times(cx.x[17]);
             let result = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]);
             // cx is changed during sys_exec, so we have to call it again
             cx = current_trap_cx();
