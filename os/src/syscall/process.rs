@@ -6,15 +6,14 @@ use alloc::sync::Arc;
 use crate::mm::{frame_alloc, MapArea, MapType, PTEFlags, VirtPageNum};
 #[allow(unused_imports)]
 use crate::{
- 
-    config::{MAX_SYSCALL_NUM,PAGE_SIZE},
+    config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str,translated_byte_buffer, MapPermission, VirtAddr},
+    mm::{translated_byte_buffer, translated_refmut, translated_str, MapPermission, VirtAddr},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,PROCESSOR
-    },timer::get_time_us
- 
+        suspend_current_and_run_next, TaskStatus, PROCESSOR,
+    },
+    timer::get_time_us,
 };
 
 #[repr(C)]
@@ -85,7 +84,11 @@ pub fn sys_exec(path: *const u8) -> isize {
 /// If there is not a child process whose pid is same as given, return -1.
 /// Else if there is a child process but it is still running, return -2.
 pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
-    trace!("kernel::pid[{}] sys_waitpid [{}]", current_task().unwrap().pid.0, pid);
+    trace!(
+        "kernel::pid[{}] sys_waitpid [{}]",
+        current_task().unwrap().pid.0,
+        pid
+    );
     let task = current_task().unwrap();
     // find a child process
 
@@ -136,7 +139,6 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     copy_to_virt(&ts1, ts);
 
     0
-
 }
 
 fn copy_to_virt<T>(src: &T, dst: *mut T) {
@@ -155,7 +157,6 @@ fn copy_to_virt<T>(src: &T, dst: *mut T) {
     }
 }
 
-
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
@@ -173,47 +174,10 @@ pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
     0
 }
 
-
 // YOUR JOB: Implement mmap.
 #[allow(unused_variables)]
 pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
     trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-
-    // if start % PAGE_SIZE != 0 {
-    //     return -1;
-    // }
-
-    // if port & !0x7 != 0 {
-    //     return -1;
-    // }
-
-    // if port & 0x7 == 0 {
-    //     return -1;
-    // }
-
-    // let map_perm = MapPermission::from_bits_truncate((port as u8) << 1);
-
-    // let page_count = (len + PAGE_SIZE - 1) / PAGE_SIZE;
-
-    // let block = TASK_MANAGER.get_current_task_control_block();
-
-    // let inner = TASK_MANAGER.inner.exclusive_access();
-
-    // let mem_set = &mut block.memory_set;
-
-    // for i in 0..page_count {
-    //     let start_va = VirtAddr::from(start + i * PAGE_SIZE);
-    //     let end_va = VirtAddr::from(start + (i + 1) * PAGE_SIZE);
-
-    //     info!(
-    //         "Mapping page: start_va = {:#x},end_va = {:#x}",
-    //         start_va.0, end_va.0
-    //     );
-    //     mem_set.insert_framed_area(start_va, end_va, map_perm);
-    // }
-
-    // drop(inner);
-    // 0
 
     let va_start: VirtAddr = start.into();
     if !va_start.aligned() {
@@ -252,11 +216,10 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
     let va_end: VirtAddr = (start + len).into();
     let va_end: VirtPageNum = va_end.ceil();
 
-
     let block = PROCESSOR.exclusive_access().current().unwrap();
     let mut block = block.inner_exclusive_access();
-    
-   let block = block.deref_mut();
+
+    let block = block.deref_mut();
     let mem_set = &mut block.memory_set;
 
     println!(
@@ -274,7 +237,7 @@ pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
         }
 
         let map_type = MapType::Framed;
-        let next =  VirtPageNum(va_start.0 + 1);
+        let next = VirtPageNum(va_start.0 + 1);
 
         let mut map = Some(MapArea::new(
             va_start.into(),
@@ -309,8 +272,8 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
 
     let block = PROCESSOR.exclusive_access().current().unwrap();
     let mut block = block.inner_exclusive_access();
-    
-   let block = block.deref_mut();
+
+    let block = block.deref_mut();
     let mem_set = &mut block.memory_set;
 
     while start_page_num != end_page_num {
@@ -324,7 +287,10 @@ pub fn sys_munmap(start: usize, len: usize) -> isize {
             return -1;
         }
         //mem_set.page_table.unmap(start_page_num);
-        mem_set.remove_area(start_page_num.into(), VirtPageNum(start_page_num.0 + 1).into());
+        mem_set.remove_area(
+            start_page_num.into(),
+            VirtPageNum(start_page_num.0 + 1).into(),
+        );
         start_page_num = VirtPageNum(start_page_num.0 + 1);
     }
     0
@@ -340,21 +306,53 @@ pub fn sys_sbrk(size: i32) -> isize {
     }
 }
 
+ 
+
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(path: *const u8) -> isize {
     trace!(
         "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+
+    let token = current_user_token();
+    let path = translated_str(token, path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let current_task = current_task().unwrap();
+        let new_task = current_task.spawn(&data);
+        let new_pid = new_task.pid.0;
+        // modify trap context of new_task, because it returns immediately after switching
+        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+        // we do not have to move to next instruction since we have done it before
+        // for child process, fork returns 0
+        trap_cx.x[10] = 0;
+        // add new task to scheduler
+        add_task(new_task);
+        return new_pid as isize;
+    } else {
+        -1
+    }
 }
 
+// syscall ID：140
+// 设置当前进程优先级为 prio
+// 参数：prio 进程优先级，要求 prio >= 2
+// 返回值：如果输入合法则返回 prio，否则返回 -1
+
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
+pub fn sys_set_priority(prio: isize) -> isize {
     trace!(
         "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+
+    if prio < 2 {
+        return -1;
+    }
+    let current_task = current_task().unwrap();
+  
+    current_task.update_prority(prio as u32);
+
+    0
 }
