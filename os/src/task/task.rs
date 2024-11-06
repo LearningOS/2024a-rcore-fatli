@@ -1,15 +1,18 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
-use alloc::vec::Vec;
-use core::cell::RefMut;
+use alloc::vec::Vec; 
+use core::borrow::BorrowMut;
+use core::cell::{Ref, RefMut};
+use core::usize;
+
 
 /// Task control block structure
 ///
@@ -31,12 +34,67 @@ impl TaskControlBlock {
     pub fn inner_exclusive_access(&self) -> RefMut<'_, TaskControlBlockInner> {
         self.inner.exclusive_access()
     }
+
+    
+    /// Get the mutable reference of the inner TCB
+    pub fn inner_exclusive_access_borrow(&self) -> Ref<'_, TaskControlBlockInner> {
+        self.inner.exclusive_access_borrow()
+    }
+
     /// Get the address of app's page table
     pub fn get_user_token(&self) -> usize {
         let inner = self.inner_exclusive_access();
         inner.memory_set.token()
     }
+
+    pub fn update_prority(&self, prio: u32) {
+        self.inner_exclusive_access().stride.update_prority(prio);
+        // unsafe {
+        //     let mut1 = &self as *const _ as *mut TaskControlBlock;
+        //     (*mut1).stride.update_prority(prio);
+        // }
+    }
+    pub fn update_stride(&self) {
+        let mut inner = self.inner_exclusive_access();
+
+        inner.stride.pass = BIG_STRIDE / inner.stride.priority;
+         inner.stride.stride += inner.stride.pass;
+    }
 }
+
+#[derive(Debug)]
+pub struct Stride {
+    pub priority: u128, // 进程优先级
+    pub stride: u128,   // 当前stride值
+    pub pass: u128,     // pass值
+                       // pass值
+}
+
+impl Default for Stride {
+    fn default() -> Self {
+        Self {
+            priority: 16,
+            stride: 0,
+            pass: 0,
+        }
+    }
+}
+
+impl Stride {
+    pub fn update_stride(&mut self) {       
+        self.pass = BIG_STRIDE / self.priority;
+        self.stride += self.pass;
+    }
+
+    pub fn update_prority(&mut self, prio: u32) {
+        self.priority = prio as u128;
+    }
+
+    pub fn get_stride(&self) -> u128 {
+        self.stride as u128
+    }
+}
+
 
 pub struct TaskControlBlockInner {
     /// The physical page number of the frame where the trap context is placed
@@ -71,7 +129,14 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    
+    pub tasks_first: usize,
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+    pub stride: Stride,
 }
+
+pub const BIG_STRIDE: u128 = 0x7FFFFFFF;
 
 impl TaskControlBlockInner {
     pub fn get_trap_cx(&self) -> &'static mut TrapContext {
@@ -93,6 +158,14 @@ impl TaskControlBlockInner {
             self.fd_table.push(None);
             self.fd_table.len() - 1
         }
+    }
+
+    pub fn get_tasks_first(&mut self) -> &mut usize {
+        &mut self.tasks_first
+    }
+
+    pub fn get_syscall_times(&mut self) -> &mut [u32; MAX_SYSCALL_NUM] {
+        &mut self.syscall_times
     }
 }
 
@@ -135,6 +208,9 @@ impl TaskControlBlock {
                     ],
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    tasks_first: 0,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    stride: Stride::default(),
                 })
             },
         };
@@ -177,6 +253,68 @@ impl TaskControlBlock {
         // **** release current PCB
     }
 
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let mut parent_inner = self.inner_exclusive_access();
+        // memory_set with elf program headers/trampoline/trap context/user stack
+        let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
+            .unwrap()
+            .ppn();
+
+        // alloc a pid and a kernel stack in kernel space
+        let pid_handle = pid_alloc();
+        let kernel_stack = kstack_alloc();
+        let kernel_stack_top = kernel_stack.get_top();
+
+        let mut new_fd_table: Vec<Option<Arc<dyn File + Send + Sync>>> = Vec::new();
+        for fd in parent_inner.fd_table.iter() {
+            if let Some(file) = fd {
+                new_fd_table.push(Some(file.clone()));
+            } else {
+                new_fd_table.push(None);
+            }
+        }
+
+        let task_control_block = Arc::new(TaskControlBlock {
+            pid: pid_handle,
+            kernel_stack,
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    trap_cx_ppn,
+                    base_size: user_sp,
+                    task_cx: TaskContext::goto_trap_return(kernel_stack_top),
+                    task_status: TaskStatus::Ready,
+                    memory_set,
+                    parent: Some(Arc::downgrade(self)),
+                    children: Vec::new(),
+                    fd_table: new_fd_table,
+                    exit_code: 0,
+                    heap_bottom: user_sp,
+                    program_brk: user_sp,
+                    tasks_first: 0,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    stride: Stride::default(),
+                })
+            },
+        });
+        // add child
+        parent_inner.children.push(task_control_block.clone());
+        // modify kernel_sp in trap_cx
+        // **** access child PCB exclusively
+
+        let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
+        *trap_cx = TrapContext::app_init_context(
+            entry_point,
+            user_sp,
+            KERNEL_SPACE.exclusive_access().token(),
+            kernel_stack_top,
+            trap_handler as usize,
+        );
+        task_control_block
+    }
+
+
     /// parent process fork the child process
     pub fn fork(self: &Arc<TaskControlBlock>) -> Arc<TaskControlBlock> {
         // ---- hold parent PCB lock
@@ -216,6 +354,9 @@ impl TaskControlBlock {
                     fd_table: new_fd_table,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    tasks_first: 0,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    stride: Stride::default(),
                 })
             },
         });

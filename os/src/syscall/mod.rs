@@ -21,7 +21,7 @@ const SYSCALL_CLOSE: usize = 57;
 /// read syscall
 const SYSCALL_READ: usize = 63;
 /// write syscall
-const SYSCALL_WRITE: usize = 64;
+pub const SYSCALL_WRITE: usize = 64;
 /// fstat syscall
 const SYSCALL_FSTAT: usize = 80;
 /// exit syscall
