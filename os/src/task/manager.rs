@@ -2,7 +2,7 @@
 use core::cell::RefMut;
 
 use super::task::{Stride, TaskControlBlockInner};
-use super::{id, TaskControlBlock};
+use super::{id, TaskControlBlock, TaskStatus};
 use crate::sync::UPSafeCell;
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
@@ -27,15 +27,15 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        {
-            if self.ready_queue.is_empty() {
-                return None;
-            }
+        // {
+        //     if self.ready_queue.is_empty() {
+        //         return None;
+        //     }
 
-            if self.ready_queue.len() == 1 {
-                return Some(self.ready_queue.pop_front().unwrap());
-            }
-        }
+        //     if self.ready_queue.len() == 1 {
+        //         return Some(self.ready_queue.pop_front().unwrap());
+        //     }
+        // }
 
         let mut remove_idx = None;
         {
@@ -45,20 +45,23 @@ impl TaskManager {
 
             {
                 for (idx, ele) in self.ready_queue.iter().enumerate() {
-                    if option.is_none() {
-                        option = Some(ele);
-                        option_inner = Some(option.as_ref().unwrap().inner_exclusive_access());
-                        remove_idx = Some(idx);
-                    } else {
-                        let ele_inner = ele.inner_exclusive_access();
-
-                        if option_inner.as_ref().unwrap().stride.get_stride()
-                            > ele_inner.stride.get_stride()
-                        {
-                            drop(option_inner);
+                    if ele.inner_exclusive_access_borrow().task_status == TaskStatus::Ready {
+                        if option.is_none() {
                             option = Some(ele);
-                            option_inner = Some(ele_inner);
+                            option = Some(ele);
+                            option_inner = Some(option.as_ref().unwrap().inner_exclusive_access());
                             remove_idx = Some(idx);
+                        } else {
+                            let ele_inner = ele.inner_exclusive_access();
+
+                            if option_inner.as_ref().unwrap().stride.get_stride()
+                                > ele_inner.stride.get_stride()
+                            {
+                                drop(option_inner);
+                                option = Some(ele);
+                                option_inner = Some(ele_inner);
+                                remove_idx = Some(idx);
+                            }
                         }
                     }
                 }
@@ -68,7 +71,7 @@ impl TaskManager {
                 }
             }
         }
-        let mut quere = &mut self.ready_queue;
+        let quere = &mut self.ready_queue;
         if let Some(idx) = remove_idx {
             return quere.remove(idx);
         } else {
@@ -97,7 +100,7 @@ pub fn fetch_task() -> Option<Arc<TaskControlBlock>> {
 
     let item = TASK_MANAGER.exclusive_access().fetch();
     if let Some(task) = item.as_ref() {
-        task.update_stride(); 
+        task.update_stride();
     }
     // println!(
     //     "fetch_task: {:?}, stride: {},status:{:?}",

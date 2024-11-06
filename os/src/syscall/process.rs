@@ -354,5 +354,5 @@ pub fn sys_set_priority(prio: isize) -> isize {
   
     current_task.update_prority(prio as u32);
 
-    0
+    prio
 }
