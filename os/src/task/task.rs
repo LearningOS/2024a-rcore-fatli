@@ -6,13 +6,14 @@ use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
-use alloc::vec::Vec; 
+use alloc::vec::Vec;
 use core::borrow::BorrowMut;
 use core::cell::{Ref, RefMut};
 use core::usize;
-
+use riscv::interrupt::Mutex;
 
 /// Task control block structure
 ///
@@ -35,7 +36,6 @@ impl TaskControlBlock {
         self.inner.exclusive_access()
     }
 
-    
     /// Get the mutable reference of the inner TCB
     pub fn inner_exclusive_access_borrow(&self) -> Ref<'_, TaskControlBlockInner> {
         self.inner.exclusive_access_borrow()
@@ -58,7 +58,7 @@ impl TaskControlBlock {
         let mut inner = self.inner_exclusive_access();
 
         inner.stride.pass = BIG_STRIDE / inner.stride.priority;
-         inner.stride.stride += inner.stride.pass;
+        inner.stride.stride += inner.stride.pass;
     }
 }
 
@@ -67,7 +67,7 @@ pub struct Stride {
     pub priority: u128, // 进程优先级
     pub stride: u128,   // 当前stride值
     pub pass: u128,     // pass值
-                       // pass值
+                        // pass值
 }
 
 impl Default for Stride {
@@ -81,7 +81,7 @@ impl Default for Stride {
 }
 
 impl Stride {
-    pub fn update_stride(&mut self) {       
+    pub fn update_stride(&mut self) {
         self.pass = BIG_STRIDE / self.priority;
         self.stride += self.pass;
     }
@@ -94,7 +94,6 @@ impl Stride {
         self.stride as u128
     }
 }
-
 
 pub struct TaskControlBlockInner {
     /// The physical page number of the frame where the trap context is placed
@@ -130,11 +129,14 @@ pub struct TaskControlBlockInner {
     /// Program break
     pub program_brk: usize,
 
-    
     pub tasks_first: usize,
     pub syscall_times: [u32; MAX_SYSCALL_NUM],
     pub stride: Stride,
+
+    pub file_fd_maps: Vec<Option<Arc<(usize,usize)>>> // file_fd_maps: Arc<Mutex<BTreeMap<usize, usize>>
 }
+
+
 
 pub const BIG_STRIDE: u128 = 0x7FFFFFFF;
 
@@ -211,6 +213,7 @@ impl TaskControlBlock {
                     tasks_first: 0,
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     stride: Stride::default(),
+                    file_fd_maps: vec![],
                 })
             },
         };
@@ -295,6 +298,7 @@ impl TaskControlBlock {
                     tasks_first: 0,
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     stride: Stride::default(),
+                    file_fd_maps: vec![],
                 })
             },
         });
@@ -313,7 +317,6 @@ impl TaskControlBlock {
         );
         task_control_block
     }
-
 
     /// parent process fork the child process
     pub fn fork(self: &Arc<TaskControlBlock>) -> Arc<TaskControlBlock> {
@@ -357,6 +360,7 @@ impl TaskControlBlock {
                     tasks_first: 0,
                     syscall_times: [0; MAX_SYSCALL_NUM],
                     stride: Stride::default(),
+                    file_fd_maps: vec![]
                 })
             },
         });

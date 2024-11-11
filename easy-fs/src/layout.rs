@@ -8,7 +8,7 @@ const EFS_MAGIC: u32 = 0x3b800001;
 /// The max number of direct inodes
 const INODE_DIRECT_COUNT: usize = 28;
 /// The max length of inode name
-const NAME_LENGTH_LIMIT: usize = 27;
+const NAME_LENGTH_LIMIT: usize = 22;
 /// The max number of indirect1 inodes
 const INODE_INDIRECT1_COUNT: usize = BLOCK_SZ / 4;
 /// The max number of indirect2 inodes
@@ -392,6 +392,8 @@ impl DiskInode {
 #[repr(C)]
 pub struct DirEntry {
     name: [u8; NAME_LENGTH_LIMIT + 1],
+    deleted: bool,
+    link_node_id: u32,
     inode_id: u32,
 }
 /// Size of a directory entry
@@ -402,8 +404,21 @@ impl DirEntry {
     pub fn empty() -> Self {
         Self {
             name: [0u8; NAME_LENGTH_LIMIT + 1],
+            deleted: false,
+            link_node_id: 0,
             inode_id: 0,
         }
+    }
+
+    /// Check if the entry is deleted
+
+    pub fn is_deleted(&self) -> bool {
+        self.deleted
+    }
+
+    pub fn set_deleted(&mut self) {
+        self.deleted = true;
+        self.name=[0u8; NAME_LENGTH_LIMIT + 1];
     }
     /// Crate a directory entry from name and inode number
     pub fn new(name: &str, inode_id: u32) -> Self {
@@ -411,9 +426,36 @@ impl DirEntry {
         bytes[..name.len()].copy_from_slice(name.as_bytes());
         Self {
             name: bytes,
+            deleted: false,
+            link_node_id: 0,
             inode_id,
         }
     }
+
+    /// Crate a directory entry from name and inode number
+    pub fn new_delete(name: &str, inode_id: u32) -> Self {
+        let mut bytes = [0u8; NAME_LENGTH_LIMIT + 1];
+        bytes[..name.len()].copy_from_slice(name.as_bytes());
+        Self {
+            name: bytes,
+            deleted: true,
+            link_node_id: 100,
+            inode_id,
+        }
+    }
+
+    /// Crate a directory entry from name and inode number
+    pub fn new_link(name: &str, inode_id: u32, link_node_id: u32) -> Self {
+        let mut bytes = [0u8; NAME_LENGTH_LIMIT + 1];
+        bytes[..name.len()].copy_from_slice(name.as_bytes());
+        Self {
+            name: bytes,
+            deleted: false,
+            link_node_id: link_node_id,
+            inode_id,
+        }
+    }
+
     /// Serialize into bytes
     pub fn as_bytes(&self) -> &[u8] {
         unsafe { core::slice::from_raw_parts(self as *const _ as usize as *const u8, DIRENT_SZ) }
@@ -422,6 +464,7 @@ impl DirEntry {
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         unsafe { core::slice::from_raw_parts_mut(self as *mut _ as usize as *mut u8, DIRENT_SZ) }
     }
+
     /// Get name of the entry
     pub fn name(&self) -> &str {
         let len = (0usize..).find(|i| self.name[*i] == 0).unwrap();
@@ -430,5 +473,10 @@ impl DirEntry {
     /// Get inode number of the entry
     pub fn inode_id(&self) -> u32 {
         self.inode_id
+    }
+
+    /// Get inode number of the entry
+    pub fn link_node_id(&self) -> u32 {
+        self.link_node_id
     }
 }

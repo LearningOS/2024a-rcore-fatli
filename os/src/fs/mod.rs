@@ -19,7 +19,7 @@ pub trait File: Send + Sync {
 
 /// The stat of a inode
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug,Default)]
 pub struct Stat {
     /// ID of device containing file
     pub dev: u64,
@@ -32,7 +32,7 @@ pub struct Stat {
     /// unused pad
     pad: [u64; 7],
 }
-
+ 
 bitflags! {
     /// The mode of a inode
     /// whether a directory or a file
@@ -46,5 +46,11 @@ bitflags! {
     }
 }
 
-pub use inode::{list_apps, open_file, OSInode, OpenFlags};
+impl Default for StatMode {
+    fn default() -> Self {
+        Self { bits: StatMode::FILE.bits }
+    }
+}
+
+pub use inode::{list_apps, open_file,create_file_link,remove_link,get_sys_fstate, OSInode, OpenFlags};
 pub use stdio::{Stdin, Stdout};

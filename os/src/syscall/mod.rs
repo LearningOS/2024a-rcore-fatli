@@ -58,6 +58,7 @@ use fs::*;
 use process::*;
 
 use crate::fs::Stat;
+pub use process::copy_to_virt;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {

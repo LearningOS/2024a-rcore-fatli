@@ -134,7 +134,7 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     0
 }
 
-fn copy_to_virt<T>(src: &T, dst: *mut T) {
+pub fn copy_to_virt<T>(src: &T, dst: *mut T) {
     let src_buf_ptr: *const u8 = unsafe { core::mem::transmute(src) };
     let dst_buf_ptr: *const u8 = unsafe { core::mem::transmute(dst) };
     let len = core::mem::size_of::<T>();
